@@ -1,7 +1,7 @@
 annotated-types==0.8.0
 cpsat-logutils==1.0.0
 orloge==1.0.0
-PuLP==4.3.1
+PuLP==3.3.0
 pydantic==2.14.4
 pydantic_core==2.50.5
 typing-inspection==0.4.5
