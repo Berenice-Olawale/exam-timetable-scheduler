@@ -1,5 +1,6 @@
 
 import pulp
+from collections import defaultdict
 
 
 class ExamScheduler:
@@ -7,10 +8,14 @@ class ExamScheduler:
     Exam Timetable Scheduler using Integer Linear Programming.
 
     Hard constraints:
-    1. Every exam must be scheduled exactly once.
+    1. Every exam is scheduled exactly once.
     2. A room cannot host two exams simultaneously.
-    3. Room capacity must accommodate all enrolled students.
-    4. A student cannot have two exams at the same time.
+    3. Room capacity must accommodate all students.
+    4. A student cannot have two exams simultaneously.
+
+    Soft constraints:
+    1. Avoid multiple exams for the same student on one day.
+    2. Minimize the number of days on which students have exams.
     """
 
     def __init__(self, courses, rooms, time_slots):
@@ -19,27 +24,78 @@ class ExamScheduler:
         self.rooms = rooms
         self.time_slots = time_slots
 
-        # Create the optimization problem
+        # Extract unique days from time slot names.
+        self.days = list(dict.fromkeys(
+            slot.split("_")[0] for slot in time_slots
+        ))
+
+        # Create the optimization problem.
         self.model = pulp.LpProblem(
             "Exam_Timetable_Scheduler",
             pulp.LpMinimize
         )
 
-        # Binary decision variables:
-        # x[course][room][slot] = 1 if an exam is assigned there,
-        # otherwise 0.
+        # Binary assignment variables.
         self.x = pulp.LpVariable.dicts(
             "exam_assignment",
             (self.courses, self.rooms, self.time_slots),
             cat=pulp.LpBinary
         )
 
+        # Binary variable: 1 if a student has an exam on a day.
+        self.student_day = pulp.LpVariable.dicts(
+            "student_day",
+            (
+                list(set(
+                    student
+                    for course in courses
+                    for student in courses[course]
+                )),
+                self.days
+            ),
+            cat=pulp.LpBinary
+        )
+
+        # Binary variable: 1 if a student has multiple exams on a day.
+        self.multiple_exams = pulp.LpVariable.dicts(
+            "multiple_exams",
+            (
+                list(set(
+                    student
+                    for course in courses
+                    for student in courses[course]
+                )),
+                self.days
+            ),
+            cat=pulp.LpBinary
+        )
+
     def add_objective(self):
         """
-        Zero objective for now.
-        Soft constraint penalties will be introduced later.
+        Minimize student inconvenience.
+
+        Penalty 1: Multiple exams on the same day.
+        Penalty 2: Number of days with exams.
         """
-        self.model += 0
+
+        multiple_exam_penalty = 100
+        exam_day_penalty = 1
+
+        students = list(self.student_day.keys())
+
+        self.model += (
+            multiple_exam_penalty * pulp.lpSum(
+                self.multiple_exams[student][day]
+                for student in students
+                for day in self.days
+            )
+            +
+            exam_day_penalty * pulp.lpSum(
+                self.student_day[student][day]
+                for student in students
+                for day in self.days
+            )
+        ), "Minimize_Student_Inconvenience"
 
     def add_constraints(self):
 
@@ -89,11 +145,7 @@ class ExamScheduler:
 
         # Constraint 4:
         # A student cannot have two exams at the same time.
-        all_students = set(
-            student
-            for course in self.courses
-            for student in self.courses[course]
-        )
+        all_students = list(self.student_day.keys())
 
         for student in all_students:
 
@@ -114,12 +166,70 @@ class ExamScheduler:
                     f"Student_Conflict_{student}_{slot}"
                 )
 
+        # Constraint 5:
+        # Link student_day variables to actual exam assignments.
+        for student in all_students:
+
+            enrolled_courses = [
+                course
+                for course in self.courses
+                if student in self.courses[course]
+            ]
+
+            for day in self.days:
+
+                day_slots = [
+                    slot for slot in self.time_slots
+                    if slot.split("_")[0] == day
+                ]
+
+                exams_on_day = pulp.lpSum(
+                    self.x[course][room][slot]
+                    for course in enrolled_courses
+                    for room in self.rooms
+                    for slot in day_slots
+                )
+
+                # student_day = 1 if at least one exam occurs that day.
+                self.model += (
+                    exams_on_day >= self.student_day[student][day],
+                    f"Student_Day_Lower_{student}_{day}"
+                )
+
+                self.model += (
+                    exams_on_day <= len(enrolled_courses)
+                    * self.student_day[student][day],
+                    f"Student_Day_Upper_{student}_{day}"
+                )
+
+                # Constraint 6:
+                # Detect multiple exams on the same day.
+                if len(enrolled_courses) > 1:
+
+                    self.model += (
+                        exams_on_day <= 1 + (
+                            len(enrolled_courses) - 1
+                        ) * self.multiple_exams[student][day],
+                        f"Multiple_Exams_Upper_{student}_{day}"
+                    )
+
+                    self.model += (
+                        exams_on_day >= 2 * self.multiple_exams[student][day],
+                        f"Multiple_Exams_Lower_{student}_{day}"
+                    )
+
+                else:
+
+                    self.model += (
+                        self.multiple_exams[student][day] == 0,
+                        f"No_Multiple_Exams_{student}_{day}"
+                    )
+
     def solve(self):
 
         self.add_objective()
         self.add_constraints()
 
-        # Run the CBC optimization solver.
         solver = pulp.PULP_CBC_CMD(msg=True)
 
         self.model.solve(solver)
@@ -132,7 +242,6 @@ class ExamScheduler:
             print("No optimal timetable was found.")
             return None
 
-        # Extract the optimized timetable.
         timetable = []
 
         for course in self.courses:
@@ -151,6 +260,7 @@ class ExamScheduler:
                             "course": course,
                             "room": room,
                             "time_slot": slot,
+                            "day": slot.split("_")[0],
                             "student_count": len(self.courses[course])
                         })
 
