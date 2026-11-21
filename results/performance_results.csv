@@ -1,0 +1,4 @@
+experiment,courses,students,rooms,time_slots,execution_time,status,objective_value,success
+Small,5,20,3,5,3.2050548999977764,Optimal,25.0,True
+Medium,15,75,5,10,0.9531277000060072,Optimal,75.0,True
+Large,30,200,8,15,5.25008239998715,Optimal,150.0,True
