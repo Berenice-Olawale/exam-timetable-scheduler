@@ -31,7 +31,8 @@ def normalize_timetable(timetable):
             "Course": course,
             "Day": day,
             "Time": time,
-            "Room": room
+            "Room": room,
+            "Students": assignment.get("student_count")
         })
 
     return pd.DataFrame(records)
